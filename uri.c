@@ -359,9 +359,9 @@ static int uri_parse_params(pool *p, const char *orig_uri, const char *uri,
   return 0;
 }
 
-int urlconf_uri_parse(pool *p, const char *orig_uri, char **host,
-    unsigned int *port, char **path, char **username, char **password,
-    pr_table_t *params) {
+int urlconf_uri_parse(pool *p, const char *orig_uri, char **scheme,
+    char **host, unsigned int *port, char **path, char **username,
+    char **password, pr_table_t *params) {
   register unsigned int i;
   pool *sub_pool;
   char *ptr, *ptr2 = NULL, *uri;
@@ -378,6 +378,7 @@ int urlconf_uri_parse(pool *p, const char *orig_uri, char **host,
 
   if (p == NULL ||
       orig_uri == NULL ||
+      scheme == NULL ||
       host == NULL ||
       port == NULL ||
       path == NULL ||
@@ -397,14 +398,15 @@ int urlconf_uri_parse(pool *p, const char *orig_uri, char **host,
   }
 
   for (i = 0; supported_schemes[i]; i++) {
-    const char *scheme;
-    size_t scheme_len;
+    const char *sc;
+    size_t sc_len;
 
-    scheme = supported_schemes[i];
-    scheme_len = strlen(scheme);
+    sc = supported_schemes[i];
+    sc_len = strlen(sc);
 
-    if (strncmp(orig_uri, scheme, scheme_len) == 0) {
+    if (strncmp(orig_uri, sc, sc_len) == 0) {
       uses_supported_scheme = TRUE;
+      *scheme = pstrdup(p, sc);
       break;
     }
   }

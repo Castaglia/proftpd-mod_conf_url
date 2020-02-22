@@ -37,11 +37,13 @@
 #define URLCONF_FILENO		7642
 
 /* Default timeouts, in secs */
-#define URLCONF_CONNECT_TIMEOUT	1UL
-#define URLCONF_REQUEST_TIMEOUT	1UL
+#define URLCONF_CONNECT_TIMEOUT	3UL
+#define URLCONF_REQUEST_TIMEOUT	10UL
 
 module conf_url_module;
-pool *conf_url_pool = NULL;
+pool *urlconf_pool = NULL;
+
+static unsigned long urlconf_flags = 0UL;
 
 /* List of URL schemes that we will support/honor. */
 static const char *urlconf_schemes[] = {
@@ -55,6 +57,9 @@ static const char *urlconf_schemes[] = {
 
 struct urlconf_data {
   pool *pool;
+  int ftps;
+  int ssl_verify;
+
   char *ptr, *buf;
   size_t bufsz, buflen;
 };
@@ -71,10 +76,20 @@ static int urlconf_scheme_supported(const char *path) {
   register unsigned int i;
 
   for (i = 0; urlconf_schemes[i]; i++) {
+    const char *scheme;
     size_t scheme_len;
 
-    scheme_len = strlen(urlconf_schemes[i]);
-    if (strncasecmp(path, urlconf_schemes[i], scheme_len) == 0) {
+    scheme = urlconf_schemes[i];
+    scheme_len = strlen(scheme);
+
+    if (strncasecmp(path, scheme, scheme_len) == 0) {
+      if (urlconf_flags & URLCONF_FL_CURL_NO_SSL) {
+        if (strcmp(scheme, "https://") == 0 ||
+            strcmp(scheme, "ftps://") == 0) {
+          continue;
+        }
+      }
+
       return TRUE;
     }
   }
@@ -82,27 +97,90 @@ static int urlconf_scheme_supported(const char *path) {
   return FALSE;
 }
 
-static int urlconf_parse_uri(pool *p, const char *uri, int *tracing) {
+static int urlconf_update_uri(pool *p, char **uri, pr_table_t *params) {
+  const void *key;
+  char *new_uri = NULL, *ptr, *query = "";
+
+  /* Change from a "ftps://" prefix -- which libcurl will interpret as
+   * an implicit FTPS connection -- to "ftp://", with SSL support.
+   */
+  if (strncmp(*uri, "ftps://", 7) == 0) {
+    size_t uri_len;
+
+    uri_len = strlen(*uri);
+    ptr = *uri + 4;
+
+    /* We want to subtract 4 for the "ftps" prefix, BUT include the terminating
+     * NUL, so we add 1 back.
+     */
+    uri_len -= 3;
+    memmove(ptr - 1, ptr, uri_len);
+  }
+
+  ptr = strrchr(*uri, '?');
+  if (ptr != NULL) {
+    *ptr = '\0';
+  }
+
+  if (pr_table_count(params) == 0) {
+    return 0;
+  }
+
+  pr_table_rewind(params);
+  key = pr_table_next(params);
+  while (key != NULL) {
+    const void *val;
+
+    pr_signals_handle();
+
+    val = pr_table_get(params, (const char *) key, NULL);
+    if (val != NULL) {
+      query = pstrcat(p, query, *query ? "&" : "", key, "=", val, NULL);
+    }
+
+    key = pr_table_next(params);
+  }
+
+  new_uri = pstrcat(p, *uri, "?", query, NULL);
+  *uri = new_uri;
+
+  return 0;
+}
+
+static int urlconf_parse_uri(pool *p, char **uri, int *ftps, int *tracing,
+    int *ssl_verify) {
   int res, xerrno;
-  char *host = NULL, *path = NULL, *username, *password;
+  char *scheme = NULL, *host = NULL, *path = NULL, *username, *password;
   unsigned int port = 0;
   pr_table_t *params = NULL;
   const void *v;
 
-  params = pr_table_alloc(p, 1);
+  params = pr_table_alloc(p, 8);
 
-  res = urlconf_uri_parse(p, uri, &host, &port, &path, &username, &password,
-    params);
+  res = urlconf_uri_parse(p, *uri, &scheme, &host, &port, &path, &username,
+    &password, params);
   if (res < 0) {
     xerrno = errno;
 
     pr_log_debug(DEBUG0, MOD_CONF_URL_VERSION
-      ": failed parsing URI '%.200s': %s", uri, strerror(xerrno));
+      ": failed parsing URI '%.200s': %s", *uri, strerror(xerrno));
 
     pr_table_free(params);
     errno = xerrno;
     return -1;
   }
+
+  /* URLs using a scheme of "ftps://" need to be handled carefully, setting
+   * all the proper libcurl options for forcing an explicit FTPS handshake.
+   */
+  if (strcmp(scheme, "ftps://") == 0) {
+    *ftps = TRUE;
+  }
+
+  /* Remove any of our expected parameters from the table, after handling
+   * them.  Afterward, rewrite the URL query parameters, having removed
+   * ours.
+   */
 
   v = pr_table_get(params, "tracing", NULL);
   if (v != NULL) {
@@ -114,8 +192,21 @@ static int urlconf_parse_uri(pool *p, const char *uri, int *tracing) {
       /* TODO: Make the trace level a param as well. */
       pr_trace_set_levels(trace_channel, 1, 20);
     }
+
+    (void) pr_table_remove(params, "tracing", NULL);
   }
 
+  v = pr_table_get(params, "ssl_verify", NULL);
+  if (v != NULL) {
+    res = pr_str_is_boolean(v);
+    if (res == FALSE) {
+      *ssl_verify = FALSE;
+    }
+
+    (void) pr_table_remove(params, "ssl_verify", NULL);
+  }
+
+  urlconf_update_uri(p, uri, params);
   return 0;
 }
 
@@ -168,6 +259,7 @@ static int urlconf_get_data(pool *p, void *http, const char *url,
   }
 
   switch (resp_code) {
+    case URLCONF_FTP_RESPONSE_CODE_OK:
     case URLCONF_HTTP_RESPONSE_CODE_OK:
       break;
 
@@ -177,12 +269,14 @@ static int urlconf_get_data(pool *p, void *http, const char *url,
       errno = EINVAL;
       return -1;
 
+    case URLCONF_FTP_RESPONSE_CODE_NOT_LOGGED_IN:
     case URLCONF_HTTP_RESPONSE_CODE_FORBIDDEN:
       pr_trace_msg(trace_channel, 2,
         "received %ld response code for '%s' request", resp_code, url);
       errno = EACCES;
       return -1;
 
+    case URLCONF_FTP_RESPONSE_CODE_NOT_FOUND:
     case URLCONF_HTTP_RESPONSE_CODE_NOT_FOUND:
       pr_trace_msg(trace_channel, 2,
         "received %ld response code for '%s' request", resp_code, url);
@@ -203,9 +297,22 @@ static int urlconf_get_data(pool *p, void *http, const char *url,
 static int urlconf_read_url(pool *p, pr_fh_t *fh, const char *url) {
   int res, xerrno;
   void *http;
+  unsigned long http_flags;
+  struct urlconf_data *data;
+
+  data = fh->fh_data;
+
+  http_flags = urlconf_flags;
+  if (data->ftps) {
+    http_flags |= URLCONF_FL_CURL_USE_SSL;
+  }
+
+  if (data->ssl_verify == FALSE) {
+    http_flags |= URLCONF_FL_CURL_NO_VERIFY;
+  }
 
   http = urlconf_http_alloc(p, URLCONF_CONNECT_TIMEOUT,
-    URLCONF_REQUEST_TIMEOUT);
+    URLCONF_REQUEST_TIMEOUT, http_flags);
   if (http == NULL) {
     return -1;
   }
@@ -266,6 +373,7 @@ static int urlconf_fsio_open(pr_fh_t *fh, const char *path, int flags) {
     pool *p;
     char *url;
     struct urlconf_data *data;
+    int ftps = FALSE, ssl_verify = TRUE;
 
     p = make_sub_pool(fh->fh_pool);
     pr_pool_tag(p, "URL Configuration Pool");
@@ -274,12 +382,16 @@ static int urlconf_fsio_open(pr_fh_t *fh, const char *path, int flags) {
     fh->fh_data = data;
 
     url = pstrdup(data->pool, path);
-    pr_log_debug(DEBUG0, MOD_CONF_URL_VERSION ": opening path '%s'", url);
+    pr_log_debug(DEBUG10, MOD_CONF_URL_VERSION ": opening path '%s'", url);
 
     /* Parse through the given URI, breaking out the needed pieces. */
-    if (urlconf_parse_uri(data->pool, url, &use_tracing) < 0) {
+    if (urlconf_parse_uri(data->pool, &url, &ftps, &use_tracing,
+        &ssl_verify) < 0) {
       return -1;
     }
+
+    data->ftps = ftps;
+    data->ssl_verify = ssl_verify;
 
     if (urlconf_read_url(data->pool, fh, url) < 0) {
       return -1;
@@ -351,8 +463,8 @@ static void urlconf_mod_unload_ev(const void *event_data, void *user_data) {
   urlconf_fs_unregister();
   urlconf_http_free();
 
-  destroy_pool(conf_url_pool);
-  conf_url_pool = NULL; 
+  destroy_pool(urlconf_pool);
+  urlconf_pool = NULL;
 }
 #endif /* PR_SHARED_MODULE */
 
@@ -369,7 +481,7 @@ static void urlconf_postparse_ev(const void *event_data, void *user_data) {
 
 static void urlconf_restart_ev(const void *event_data, void *user_data) {
   /* Register the FSes.. */
-  urlconf_fs_register(conf_url_pool);
+  urlconf_fs_register(urlconf_pool);
 }
 
 /* Initialization functions
@@ -437,8 +549,8 @@ static void urlconf_fs_unregister(void) {
 }
 
 static int urlconf_init(void) {
-  conf_url_pool = make_sub_pool(permanent_pool);
-  pr_pool_tag(conf_url_pool, MOD_CONF_URL_VERSION);
+  urlconf_pool = make_sub_pool(permanent_pool);
+  pr_pool_tag(urlconf_pool, MOD_CONF_URL_VERSION);
 
   /* Register event handlers. */
 #if defined(PR_SHARED_MODULE)
@@ -450,8 +562,8 @@ static int urlconf_init(void) {
   pr_event_register(&conf_url_module, "core.restart", urlconf_restart_ev,
     NULL);
 
-  urlconf_fs_register(conf_url_pool);
-  urlconf_http_init(conf_url_pool);
+  urlconf_fs_register(urlconf_pool);
+  urlconf_http_init(urlconf_pool, &urlconf_flags);
 
   return 0;
 }

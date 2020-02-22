@@ -27,7 +27,8 @@
 #ifndef MOD_CONF_URL_URI_H
 #define MOD_CONF_URL_URI_H
 
-int urlconf_uri_parse(pool *p, const char *uri, char **host, unsigned int *port,
-  char **path, char **username, char **password, pr_table_t *params);
+int urlconf_uri_parse(pool *p, const char *uri, char **scheme, char **host,
+  unsigned int *port, char **path, char **username, char **password,
+  pr_table_t *params);
 
 #endif /* MOD_CONF_URL_URI_H */

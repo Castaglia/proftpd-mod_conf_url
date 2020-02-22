@@ -39,6 +39,11 @@
 #define URLCONF_HTTP_HEADER_LAST_MODIFIED		"Last-Modified"
 #define URLCONF_HTTP_HEADER_USER_AGENT			"User-Agent"
 
+/* FTP response codes */
+#define URLCONF_FTP_RESPONSE_CODE_OK			226L
+#define URLCONF_FTP_RESPONSE_CODE_NOT_LOGGED_IN		530L
+#define URLCONF_FTP_RESPONSE_CODE_NOT_FOUND		550L
+
 /* HTTP response codes */
 #define URLCONF_HTTP_RESPONSE_CODE_OK			200L
 #define URLCONF_HTTP_RESPONSE_CODE_NO_CONTENT		204L
@@ -61,7 +66,7 @@
 #define URLCONF_HTTP_CONTENT_TYPE_TEXT_PLAIN		"text/plain"
 
 void *urlconf_http_alloc(pool *p, unsigned long max_connect_secs,
-  unsigned long max_request_secs);
+  unsigned long max_request_secs, unsigned long flags);
 int urlconf_http_destroy(pool *p, void *http);
 
 /* Return a table populated with the default request headers: Accept,
@@ -74,7 +79,7 @@ int urlconf_http_get(pool *p, void *http, const char *url, pr_table_t *headers,
   long *resp_code, const char **content_type);
 
 /* API lifetime functions, for mod_conf_url use only. */
-int urlconf_http_init(pool *p);
+int urlconf_http_init(pool *p, unsigned long *feature_flags);
 int urlconf_http_free(void);
 
 #endif /* MOD_CONF_URL_HTTP_H */

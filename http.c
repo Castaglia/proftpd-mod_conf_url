@@ -370,7 +370,7 @@ static int http_trace_cb(CURL *curl, curl_infotype data_type, char *data,
 }
 
 void *urlconf_http_alloc(pool *p, unsigned long max_connect_secs,
-    unsigned long max_request_secs) {
+    unsigned long max_request_secs, unsigned long flags) {
   CURL *curl;
   CURLcode curl_code;
 
@@ -426,6 +426,16 @@ void *urlconf_http_alloc(pool *p, unsigned long max_connect_secs,
       "error setting CURLOPT_SHARE: %s", curl_easy_strerror(curl_code));
   }
 
+  /* SSL-isms. */
+  if (flags & URLCONF_FL_CURL_NO_VERIFY) {
+    curl_code = curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0);
+    if (curl_code != CURLE_OK) {
+      pr_trace_msg(trace_channel, 1,
+        "error setting CURLOPT_SSL_VERIFYPEER: %s",
+        curl_easy_strerror(curl_code));
+    }
+  }
+
   /* FTP-isms. */
   curl_code = curl_easy_setopt(curl, CURLOPT_FTP_FILEMETHOD,
     CURLFTPMETHOD_NOCWD);
@@ -433,6 +443,20 @@ void *urlconf_http_alloc(pool *p, unsigned long max_connect_secs,
     pr_trace_msg(trace_channel, 1,
       "error setting CURLOPT_FTP_FILEMETHOD: %s",
       curl_easy_strerror(curl_code));
+  }
+
+  if (flags & URLCONF_FL_CURL_USE_SSL) {
+    curl_code = curl_easy_setopt(curl, CURLOPT_USE_SSL, CURLUSESSL_CONTROL);
+    if (curl_code != CURLE_OK) {
+      pr_trace_msg(trace_channel, 1,
+        "error setting CURLOPT_USE_SSL: %s", curl_easy_strerror(curl_code));
+    }
+
+    curl_code = curl_easy_setopt(curl, CURLOPT_FTPSSLAUTH, CURLFTPAUTH_TLS);
+    if (curl_code != CURLE_OK) {
+      pr_trace_msg(trace_channel, 1,
+        "error setting CURLOPT_FTPSSLAUTH: %s", curl_easy_strerror(curl_code));
+    }
   }
 
   /* HTTP-isms. */
@@ -444,11 +468,14 @@ void *urlconf_http_alloc(pool *p, unsigned long max_connect_secs,
       curl_easy_strerror(curl_code));
   }
 
-  curl_code = curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, "gzip, deflate");
-  if (curl_code != CURLE_OK) {
-    pr_trace_msg(trace_channel, 1,
-      "error setting CURLOPT_ACCEPT_ENCODING: %s",
-      curl_easy_strerror(curl_code));
+  if (!(flags & URLCONF_FL_CURL_NO_ZLIB)) {
+    curl_code = curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING,
+      "gzip, deflate");
+    if (curl_code != CURLE_OK) {
+      pr_trace_msg(trace_channel, 1,
+        "error setting CURLOPT_ACCEPT_ENCODING: %s",
+        curl_easy_strerror(curl_code));
+    }
   }
 
   curl_code = curl_easy_setopt(curl, CURLOPT_USERAGENT, MOD_CONF_URL_VERSION);
@@ -542,7 +569,7 @@ int urlconf_http_destroy(pool *p, void *http) {
   return -1;
 }
 
-int urlconf_http_init(pool *p) {
+int urlconf_http_init(pool *p, unsigned long *feature_flags) {
   CURLcode curl_code;
   CURLSHcode share_code;
   curl_version_info_data *curl_info;
@@ -593,9 +620,20 @@ int urlconf_http_init(pool *p) {
     pr_log_debug(DEBUG5, MOD_CONF_URL_VERSION
       ": libcurl version: %s", curl_info->version);
 
+    if (!(curl_info->features & CURL_VERSION_LIBZ)) {
+      pr_log_pri(PR_LOG_INFO, MOD_CONF_URL_VERSION
+        ": libcurl compiled without zlib support");
+      *feature_flags |= URLCONF_FL_CURL_NO_ZLIB;
+
+    } else {
+      pr_log_debug(DEBUG5, MOD_CONF_URL_VERSION
+        ": libcurl compiled using zlib version: %s", curl_info->libz_version);
+    }
+
     if (!(curl_info->features & CURL_VERSION_SSL)) {
       pr_log_pri(PR_LOG_INFO, MOD_CONF_URL_VERSION
         ": libcurl compiled without SSL support");
+      *feature_flags |= URLCONF_FL_CURL_NO_SSL;
 
     } else {
       pr_log_debug(DEBUG5, MOD_CONF_URL_VERSION
