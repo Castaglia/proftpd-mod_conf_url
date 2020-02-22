@@ -259,6 +259,7 @@ static int urlconf_get_data(pool *p, void *http, const char *url,
   }
 
   switch (resp_code) {
+    case URLCONF_FILE_RESPONSE_CODE_OK:
     case URLCONF_FTP_RESPONSE_CODE_OK:
     case URLCONF_HTTP_RESPONSE_CODE_OK:
       break;
@@ -470,7 +471,6 @@ static void urlconf_mod_unload_ev(const void *event_data, void *user_data) {
 
 static void urlconf_postparse_ev(const void *event_data, void *user_data) {
   urlconf_fs_unregister();
-  urlconf_http_free();
 
   if (use_tracing == TRUE) {
     pr_trace_set_levels(trace_channel, 0, 0);

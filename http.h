@@ -39,6 +39,9 @@
 #define URLCONF_HTTP_HEADER_LAST_MODIFIED		"Last-Modified"
 #define URLCONF_HTTP_HEADER_USER_AGENT			"User-Agent"
 
+/* file response codes */
+#define URLCONF_FILE_RESPONSE_CODE_OK			0L
+
 /* FTP response codes */
 #define URLCONF_FTP_RESPONSE_CODE_OK			226L
 #define URLCONF_FTP_RESPONSE_CODE_NOT_LOGGED_IN		530L

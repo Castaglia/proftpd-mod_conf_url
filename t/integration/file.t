@@ -6,7 +6,7 @@ use Carp;
 use Cwd qw(abs_path realpath);
 use File::Path qw(mkpath rmtree);
 use File::Spec;
-use Test::Simple tests => 4;
+use Test::Simple tests => 2;
 
 my $proftpd = $ENV{PROFTPD_TEST_BIN};
 my $proftpd_opts = "-t";
@@ -17,33 +17,19 @@ if ($ENV{TEST_VERBOSE}) {
 }
 
 my ($cmd, $ex, $res);
-my $bad_dns_url = "https://test.example.com?tracing=$tracing";
-$cmd = "$proftpd $proftpd_opts -c '$bad_dns_url'";
+my $enoent_url = "file:///no/such/file?tracing=$tracing";
+$cmd = "$proftpd $proftpd_opts -c '$enoent_url'";
 $ex = undef;
 eval { $res = run_cmd($cmd, 1) };
 $ex = $@ if $@;
-ok(defined($ex), "handled HTTPS URL with bad hostname");
+ok(defined($ex), "handled file URL with no such file");
 
-my $bad_port_url = "https://www.google.com:45678?tracing=$tracing";
-$cmd = "$proftpd $proftpd_opts -c '$bad_port_url'";
-$ex = undef;
-eval { $res = run_cmd($cmd, 1) };
-$ex = $@ if $@;
-ok(defined($ex), "handled HTTPS URL with bad port");
-
-my $simple_url = "https://www.google.com/foo/bar/baz?tracing=$tracing";
-$cmd = "$proftpd $proftpd_opts -c '$simple_url'";
-$ex = undef;
-eval { $res = run_cmd($cmd, 1) };
-$ex = $@ if $@;
-ok(defined($ex), "handled HTTPS URL with no such file");
-
-my $good_url = "https://raw.githubusercontent.com/proftpd/proftpd/master/sample-configurations/basic.conf?tracing=$tracing&ssl_verify=false";
+my $good_url = "file:///Users/tj/git/proftpd/sample-configurations/basic.conf?tracing=$tracing";
 $cmd = "$proftpd $proftpd_opts -c '$good_url'";
 $ex = undef;
 eval { $res = run_cmd($cmd, 1) };
 $ex = $@ if $@;
-ok(defined($ex), "handled HTTPS URL with good file");
+ok(defined($ex), "handled file URL with good file");
 
 sub run_cmd {
   my $cmd = shift;

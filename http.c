@@ -153,6 +153,9 @@ static int http_perform(pool *p, CURL *curl, const char *url,
         /* Hit our connect timeout? */
         xerrno = ETIMEDOUT;
 
+      } else if (strstr(curl_errorbuf, "Couldn't open file") != NULL) {
+        xerrno = ENOENT;
+
       } else {
         /* Generic error */
         xerrno = EPERM;

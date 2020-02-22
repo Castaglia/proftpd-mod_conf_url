@@ -38,6 +38,7 @@ my $test_files = [
   ["$test_dir/https.t", 'https'],
   ["$test_dir/ftp.t", 'ftp'],
   ["$test_dir/ftps.t", 'ftps'],
+  ["$test_dir/file.t", 'file'],
 ];
 
 # Create a temp directory for each separate test, pass it in, cleanup afterward
@@ -46,6 +47,7 @@ my $tap_test_args = {
   'https' => [get_tmp_dir()],
   'ftp' => [get_tmp_dir()],
   'ftps' => [get_tmp_dir()],
+  'file' => [get_tmp_dir()],
 };
 
 my $tap_opts = {
