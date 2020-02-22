@@ -1,0 +1,13 @@
+tests.log
+Makefile
+config.log
+config.status
+autom4te.cache
+mod_conf_url.h
+.libs
+*.sw?
+*.la
+*.lo
+*Tests*.log
+*.o
+*~
