@@ -11,7 +11,7 @@ install:
   - sudo apt-get install -y check
   - sudo apt-get install -y libsubunit-dev
   # for curl
-  - sudo apt-get install -y libcurl4
+  - sudo apt-get install -y libcurl4-openssl-dev
   # for static code analysis
   # - sudo apt-get install -y cppcheck rats
   # for test code coverage
